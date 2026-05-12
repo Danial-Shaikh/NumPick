@@ -34,7 +34,7 @@ def normalize_text(text):
     text = text.replace("–", "-")
     text = text.replace("—", "-")
 
-    # Remove common currency symbols
+    # Remove common currency symbols/text
     text = text.replace("$", "")
     text = text.replace("CAD", "")
     text = text.replace("USD", "")
@@ -71,6 +71,58 @@ def extract_numbers(text):
             pass
 
     return numbers
+
+
+def should_show_numpick(text, min_numbers=3):
+    """
+    Decide whether NumPick should appear.
+
+    NumPick will only show when copied text looks like a real group
+    of numeric/table data.
+
+    This prevents it from popping up when copying normal text,
+    quote numbers, random IDs, sentences, etc.
+    """
+    if not text or not text.strip():
+        return False
+
+    numbers = extract_numbers(text)
+
+    # Require at least a few numbers
+    if len(numbers) < min_numbers:
+        return False
+
+    cleaned = normalize_text(text)
+
+    # Count letters and digits
+    letter_count = len(re.findall(r'[A-Za-z]', cleaned))
+    digit_count = len(re.findall(r'\d', cleaned))
+
+    # If there are way more letters than digits,
+    # it is probably normal copied text, not numeric data.
+    if digit_count == 0:
+        return False
+
+    if letter_count > digit_count * 2:
+        return False
+
+    # Strong signs that the copied data is from a table/spreadsheet/list
+    has_table_formatting = (
+        "\n" in cleaned or
+        "\t" in cleaned or
+        "$" in text or
+        "," in text
+    )
+
+    # If there are 5+ numbers, it is very likely numeric data
+    if len(numbers) >= 5:
+        return True
+
+    # If there are only 3-4 numbers, require table/list-like formatting
+    if len(numbers) >= min_numbers and has_table_formatting:
+        return True
+
+    return False
 
 
 def format_number(n):
@@ -414,8 +466,29 @@ class CalcMenu(tk.Menu):
         self.add_separator()
         self.add_command(label="✖  Cancel", command=self.unpost)
 
+        # Place NumPick beside the normal right-click menu area.
+        # Increase offset_x if you want even more space.
+        offset_x = 300
+        offset_y = 10
+
+        screen_w = master.winfo_screenwidth()
+        screen_h = master.winfo_screenheight()
+
+        menu_x = x + offset_x
+        menu_y = y + offset_y
+
+        # Keep menu inside screen bounds
+        if menu_x > screen_w - 240:
+            menu_x = x - 300
+
+        if menu_y > screen_h - 260:
+            menu_y = screen_h - 280
+
+        if menu_y < 0:
+            menu_y = 20
+
         try:
-            self.tk_popup(x, y)
+            self.tk_popup(menu_x, menu_y)
         finally:
             self.grab_release()
 
@@ -501,13 +574,12 @@ class NumPickApp:
                     except Exception:
                         text = ""
 
-                    if text.strip():
+                    # Only show NumPick when clipboard looks like numeric/table data.
+                    # This stops it from popping up on normal copied text or quote numbers.
+                    if should_show_numpick(text, min_numbers=3):
                         self.root.after(0, lambda: CalcMenu(self.root, text, x, y))
                     else:
-                        self.root.after(0, lambda: ErrorPopup(
-                            self.root,
-                            "Copy your selection first with Ctrl+C,\nthen right-click."
-                        ))
+                        return
 
             listener = mouse.Listener(on_click=on_click)
             listener.daemon = True
